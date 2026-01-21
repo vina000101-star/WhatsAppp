@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>WhatsApp</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root { --wa-green: #008069; --wa-bg: #efe7de; }
+        * { margin:0; padding:0; box-sizing:border-box; font-family: 'Segoe UI', sans-serif; }
+        body { background: #fff; height: 100vh; overflow: hidden; }
+
+        /* AUTH SCREEN */
+        #auth-screen { position: fixed; inset: 0; background: #fff; z-index: 2000; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; text-align: center; }
+        .wa-logo { width: 60px; margin-bottom: 20px; }
+        .wa-input { width: 100%; max-width: 300px; padding: 12px; border: none; border-bottom: 2px solid var(--wa-green); margin-bottom: 15px; outline: none; }
+        .btn-wa { background: var(--wa-green); color: #fff; border: none; width: 100%; max-width: 300px; padding: 12px; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        .btn-wa:disabled { background: #ccc; }
+
+        /* MAIN APP */
+        #app-interface { display: none; height: 100vh; flex-direction: column; }
+        header { background: var(--wa-green); color: #fff; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .contact-list { flex: 1; overflow-y: auto; background: #fff; }
+        .contact-item { display: flex; align-items: center; padding: 15px; gap: 15px; border-bottom: 1px solid #f9f9f9; }
+        
+        #chat-window { position: fixed; inset: 0; background: var(--wa-bg); z-index: 1500; display: none; flex-direction: column; background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png'); }
+        .chat-header { background: var(--wa-green); color: #fff; padding: 10px; display: flex; align-items: center; gap: 10px; }
+        .chat-body { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .bubble { padding: 8px 12px; border-radius: 8px; max-width: 80%; font-size: 0.95rem; }
+        .me { align-self: flex-end; background: #d9fdd3; }
+        .other { align-self: flex-start; background: #fff; }
+    </style>
+</head>
+<body>
+
+    <div id="auth-screen">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" class="wa-logo">
+        <h3>WhatsApp XSANZ</h3>
+        <p style="font-size: 0.8rem; color: #667781; margin-bottom: 20px;">Masukan Nama & Password</p>
+        <input type="text" id="username" class="wa-input" placeholder="Nama">
+        <input type="password" id="password" class="wa-input" placeholder="Password">
+        <button id="btnLanjut" class="btn-wa" onclick="handleAuth()">Lanjut</button>
+        <p id="err-log" style="color:red; font-size:0.7rem; margin-top:10px;"></p>
+    </div>
+
+    <div id="app-interface">
+        <header>
+            <b id="myAccountName">WhatsApp</b>
+            <i class="fas fa-sign-out-alt" onclick="location.reload()"></i>
+        </header>
+        <div class="contact-list" id="contactList"></div>
+    </div>
+
+    <div id="chat-window">
+        <div class="chat-header">
+            <i class="fas fa-arrow-left" onclick="closeChat()"></i>
+            <b id="targetName">Nama</b>
+        </div>
+        <div class="chat-body" id="chatBody"></div>
+        <div style="padding:10px; background:#f0f2f5; display:flex; gap:10px;">
+            <input type="text" id="msgInput" style="flex:1; border:none; padding:10px; border-radius:20px; outline:none;" placeholder="Ketik pesan">
+            <button onclick="sendMsg()" style="background:var(--wa-green); color:#fff; border:none; width:40px; height:40px; border-radius:50%;"><i class="fas fa-paper-plane"></i></button>
+        </div>
+    </div>
+
+<script>
+    let db = { users: [], messages: [] };
+    let currentSession = null;
+    let activeTarget = null;
+
+    // Fungsi Sinkronisasi Utama
+    async function syncDB() {
+        try {
+            const res = await fetch('api.php');
+            if (!res.ok) throw new Error("File api.php tidak ditemukan!");
+            db = await res.json();
+            if(currentSession) {
+                renderContacts();
+                if(activeTarget) renderMessages();
+            }
+        } catch (e) {
+            document.getElementById('err-log').innerText = "Koneksi Gagal: Pastikan ada api.php di hosting.";
+        }
+    }
+
+    async function handleAuth() {
+        const u = document.getElementById('username').value.trim();
+        const p = document.getElementById('password').value;
+        const btn = document.getElementById('btnLanjut');
+        
+        if(!u || !p) return alert("Isi Nama & Password!");
+        
+        btn.disabled = true;
+        btn.innerText = "Loading...";
+
+        try {
+            // Cek apakah user sudah ada di data hasil sync
+            let user = db.users.find(x => x.name.toLowerCase() === u.toLowerCase());
+
+            if(user) {
+                if(user.pass !== p) {
+                    alert("Password Salah!");
+                    btn.disabled = false;
+                    btn.innerText = "Lanjut";
+                    return;
+                }
+            } else {
+                // Daftar Baru ke Server
+                user = { name: u, pass: p, avatar: u.charAt(0).toUpperCase() };
+                await fetch('api.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'auth', data: user })
+                });
+            }
+
+            currentSession = user;
+            document.getElementById('auth-screen').style.display = 'none';
+            document.getElementById('app-interface').style.display = 'flex';
+            document.getElementById('myAccountName').innerText = u;
+            syncDB();
+        } catch (err) {
+            alert("Gagal terhubung ke server. Pastikan api.php sudah di-upload!");
+            btn.disabled = false;
+            btn.innerText = "Lanjut";
+        }
+    }
+
+    function renderContacts() {
+        const list = document.getElementById('contactList');
+        list.innerHTML = '';
+        db.users.forEach(u => {
+            if(u.name !== currentSession.name) {
+                list.innerHTML += `<div class="contact-item" onclick="openChat('${u.name}')">
+                    <div style="width:45px; height:45px; border-radius:50%; background:#00a884; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:bold;">${u.avatar}</div>
+                    <b>${u.name}</b>
+                </div>`;
+            }
+        });
+    }
+
+    function openChat(name) {
+        activeTarget = name;
+        document.getElementById('chat-window').style.display = 'flex';
+        document.getElementById('targetName').innerText = name;
+        renderMessages();
+    }
+
+    function closeChat() { document.getElementById('chat-window').style.display = 'none'; activeTarget = null; }
+
+    function renderMessages() {
+        const body = document.getElementById('chatBody');
+        body.innerHTML = '';
+        const chats = db.messages.filter(m => (m.from === currentSession.name && m.to === activeTarget) || (m.from === activeTarget && m.to === currentSession.name));
+        chats.forEach(m => {
+            const side = m.from === currentSession.name ? 'me' : 'other';
+            body.innerHTML += `<div class="bubble ${side}">${m.text}</div>`;
+        });
+        body.scrollTop = body.scrollHeight;
+    }
+
+    async function sendMsg() {
+        const inp = document.getElementById('msgInput');
+        if(!inp.value) return;
+        const msg = { from: currentSession.name, to: activeTarget, text: inp.value, time: Date.now() };
+        await fetch('api.php', { method: 'POST', body: JSON.stringify({ type: 'send_msg', data: msg }) });
+        inp.value = '';
+        syncDB();
+    }
+
+    // Jalankan Sinkronisasi Awal
+    syncDB();
+    setInterval(syncDB, 4000);
+</script>
+</body>
+</html>
